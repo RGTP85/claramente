@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#7B6B8D" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="ClaraMente" />
+  <meta name="description" content="ClaraMente — Organizá tu consultorio psicológico: pacientes, citas, notas clínicas, finanzas y turnero semanal." />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>ClaraMente</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #FAF8F5; }
+    #root { min-height: 100vh; }
+    /* Loading screen */
+    .loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; flex-direction: column; gap: 12px; }
+    .loading h1 { font-family: Georgia, serif; font-size: 28px; color: #3A322D; }
+    .loading h1 span { color: #7B6B8D; }
+    .loading p { color: #9B8E85; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="loading">
+      <h1>Clara<span>Mente</span></h1>
+      <p>Cargando...</p>
+    </div>
+  </div>
+
+  <!-- React via CDN -->
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
+  <script type="text/babel" data-type="module">
+    const { useState, useEffect, useRef } = React;
+
+    // ─── Utils ───
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const fmtDate = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-AR", { day: "numeric", month: "short" }) : "";
+    const fmtDay = (d) => d ? ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][new Date(d + "T12:00:00").getDay()] : "";
+    const fmtMoney = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
+    const today = () => new Date().toISOString().split("T")[0];
+    const toDateStr = (d) => d.toISOString().split("T")[0];
+
+    function getWeekDates(offset = 0) {
+      const now = new Date();
+      const day = now.getDay();
+      const diffToMonday = day === 0 ? 6 : day - 1;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - diffToMonday + offset * 7);
+      monday.setHours(12, 0, 0, 0);
+      const dates = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        dates.push(toDateStr(d));
+      }
+      return dates;
+    }
+
+    const T = {
+      bg: "#FAF8F5", card: "#FFFFFF", accent: "#7B6B8D", accentLight: "#C4B8D4",
+      accentSoft: "#EDE7F3", text: "#3A322D", muted: "#9B8E85", border: "#EDE7E0",
+      danger: "#C47A6A", dangerSoft: "#FDF0ED", success: "#7BA58A", successSoft: "#EFF6F1",
+      warm: "#F3EFF7", warn: "#D4A34A", warnSoft: "#FDF6E8",
+    };
+
+    const WORKPLACES = [
+      { value: "particular", label: "Particular", emoji: "🏠" },
+      { value: "centro", label: "Centro", emoji: "🏢" },
+      { value: "centro_vecinal", label: "Centro Vecinal", emoji: "🏛️" },
+    ];
+
+    const TABS = [
+      { id: "patients", label: "Pacientes", icon: "👤" },
+      { id: "agenda", label: "Agenda", icon: "📅" },
+      { id: "notes", label: "Notas", icon: "📝" },
+      { id: "turnero", label: "Turnero", icon: "📋" },
+      { id: "finances", label: "Finanzas", icon: "💰" },
+      { id: "debtors", label: "Deudas", icon: "⚠️" },
+    ];
+
+    const defaults = { patients: [], appointments: [], notes: [], payments: [] };
+    function load() { try { const r = localStorage.getItem("claramente-v1"); return r ? { ...defaults, ...JSON.parse(r) } : { ...defaults }; } catch { return { ...defaults }; } }
+    function save(d) { try { localStorage.setItem("claramente-v1", JSON.stringify(d)); } catch {} }
+
+    function requestNotifPermission() { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); }
+    function sendNotif(title, body, tag) {
+      if ("Notification" in window && Notification.permission === "granted") {
+        try { new Notification(title, { body, tag: tag || uid(), renotify: true }); } catch {}
+      }
+    }
+
+    // ─── UI Components ───
+    function Modal({ open, onClose, title, children }) {
+      if (!open) return null;
+      return (
+        <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(58,50,45,0.4)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center", animation: "fadeIn .2s" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", overflow: "auto", padding: "22px 18px 30px", animation: "slideUp .3s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: T.text, fontFamily: "'Playfair Display', Georgia, serif" }}>{title}</h3>
+              <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 18, color: T.muted, cursor: "pointer" }}>✕</button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+    function Inp({ label, ...p }) {
+      return (<div style={{ marginBottom: 12 }}>{label && <label style={{ fontSize: 11, fontWeight: 500, color: T.muted, display: "block", marginBottom: 4, letterSpacing: .3 }}>{label}</label>}<input {...p} style={{ width: "100%", padding: "9px 11px", border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 13.5, color: T.text, background: T.bg, outline: "none", boxSizing: "border-box", fontFamily: "inherit", ...(p.style || {}) }} /></div>);
+    }
+    function Sel({ label, options, ...p }) {
+      return (<div style={{ marginBottom: 12 }}>{label && <label style={{ fontSize: 11, fontWeight: 500, color: T.muted, display: "block", marginBottom: 4, letterSpacing: .3 }}>{label}</label>}<select {...p} style={{ width: "100%", padding: "9px 11px", border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 13.5, color: T.text, background: T.bg, outline: "none", boxSizing: "border-box", fontFamily: "inherit", ...(p.style || {}) }}>{options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>);
+    }
+    function TArea({ label, ...p }) {
+      return (<div style={{ marginBottom: 12 }}>{label && <label style={{ fontSize: 11, fontWeight: 500, color: T.muted, display: "block", marginBottom: 4, letterSpacing: .3 }}>{label}</label>}<textarea {...p} style={{ width: "100%", padding: "9px 11px", border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 13.5, color: T.text, background: T.bg, outline: "none", boxSizing: "border-box", fontFamily: "inherit", minHeight: 70, resize: "vertical", ...(p.style || {}) }} /></div>);
+    }
+    function Btn({ children, variant = "primary", ...p }) {
+      const s = { primary: { background: T.accent, color: "#fff" }, secondary: { background: T.accentSoft, color: T.accent }, danger: { background: T.dangerSoft, color: T.danger }, success: { background: T.successSoft, color: T.success } };
+      return <button {...p} style={{ padding: "10px 18px", borderRadius: 9, border: "none", fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", ...s[variant], ...(p.style || {}) }}>{children}</button>;
+    }
+    function Avatar({ name, size = 38 }) {
+      const i = (name || "?").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+      const c = ["#7B6B8D","#7BA58A","#C47A6A","#6B8DA6","#A67BB5","#B5944A"];
+      return <div style={{ width: size, height: size, borderRadius: "50%", background: c[Math.abs((name?.charCodeAt(0)||0)) % c.length], display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: size * .38, fontWeight: 600, flexShrink: 0 }}>{i}</div>;
+    }
+    function Empty({ icon, msg, sub }) {
+      return <div style={{ textAlign: "center", padding: "50px 20px", opacity: .65 }}><div style={{ fontSize: 42, marginBottom: 10 }}>{icon}</div><div style={{ fontSize: 14, fontWeight: 500, color: T.text }}>{msg}</div>{sub && <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{sub}</div>}</div>;
+    }
+    function Badge({ color, children }) {
+      return <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 500, background: color === "green" ? T.successSoft : color === "red" ? T.dangerSoft : color === "yellow" ? T.warnSoft : T.accentSoft, color: color === "green" ? T.success : color === "red" ? T.danger : color === "yellow" ? T.warn : T.accent }}>{children}</span>;
+    }
+
+    // ═══ PATIENTS ═══
+    function PatientsTab({ data, setData }) {
+      const [show, setShow] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [search, setSearch] = useState("");
+      const [viewing, setViewing] = useState(null);
+      const emptyForm = { name: "", phone: "", email: "", job: "", workplace: "particular", sessionFee: "", commissionFee: "", frequency: "semanal", notes: "" };
+      const [form, setForm] = useState(emptyForm);
+
+      const handleSave = () => {
+        if (!form.name.trim()) return;
+        const u = { ...data };
+        const entry = { ...form, sessionFee: Number(form.sessionFee) || 0, commissionFee: form.workplace === "centro" ? (Number(form.commissionFee) || 0) : 0 };
+        if (editing) { u.patients = u.patients.map(p => p.id === editing ? { ...p, ...entry } : p); }
+        else { u.patients = [...u.patients, { id: uid(), ...entry, createdAt: new Date().toISOString() }]; }
+        setData(u); setShow(false); setEditing(null); setForm(emptyForm);
+      };
+      const handleDelete = (id) => {
+        if (!confirm("¿Eliminar paciente y todos sus datos?")) return;
+        setData({ ...data, patients: data.patients.filter(p => p.id !== id), appointments: data.appointments.filter(a => a.patientId !== id), notes: data.notes.filter(n => n.patientId !== id), payments: data.payments.filter(p => p.patientId !== id) });
+        setViewing(null);
+      };
+      const filtered = data.patients.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || (p.job || "").toLowerCase().includes(search.toLowerCase()));
+      const vp = data.patients.find(p => p.id === viewing);
+      const wpInfo = (w) => WORKPLACES.find(x => x.value === w) || WORKPLACES[0];
+
+      return (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <div style={{ flex: 1, position: "relative" }}>
+              <input placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: "100%", padding: "9px 11px 9px 32px", border: `1px solid ${T.border}`, borderRadius: 9, fontSize: 13.5, background: T.card, outline: "none", boxSizing: "border-box", fontFamily: "inherit", color: T.text }} />
+              <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: .35 }}>🔍</span>
+            </div>
+            <Btn onClick={() => { setForm(emptyForm); setEditing(null); setShow(true); }}>+ Nuevo</Btn>
+          </div>
+          {filtered.length === 0 ? <Empty icon="👤" msg="Sin pacientes" sub="Tocá + Nuevo para agregar" /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {filtered.map(p => (
+                <div key={p.id} onClick={() => setViewing(p.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px", background: T.card, borderRadius: 10, cursor: "pointer", border: `1px solid ${T.border}` }}>
+                  <Avatar name={p.name} size={36} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: T.text }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: T.muted, display: "flex", gap: 6, alignItems: "center", marginTop: 1 }}>
+                      <span>{wpInfo(p.workplace).emoji} {wpInfo(p.workplace).label}</span>
+                      {p.job && <span>· {p.job}</span>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.accent }}>{fmtMoney(p.sessionFee)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <Modal open={!!viewing} onClose={() => setViewing(null)} title={vp?.name || ""}>
+            {vp && (<div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: T.warm, borderRadius: 10, marginBottom: 14 }}>
+                <Avatar name={vp.name} size={46} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600 }}>{vp.name}</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>{wpInfo(vp.workplace).emoji} {wpInfo(vp.workplace).label}</div>
+                  {vp.job && <div style={{ fontSize: 12, color: T.muted }}>🏢 {vp.job}</div>}
+                  {vp.phone && <div style={{ fontSize: 12, color: T.muted }}>📱 {vp.phone}</div>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <div style={{ flex: 1, padding: 10, background: T.bg, borderRadius: 8, textAlign: "center" }}><div style={{ fontSize: 10, color: T.muted }}>SESIÓN</div><div style={{ fontSize: 16, fontWeight: 600, color: T.accent }}>{fmtMoney(vp.sessionFee)}</div></div>
+                {vp.workplace === "centro" && <div style={{ flex: 1, padding: 10, background: T.bg, borderRadius: 8, textAlign: "center" }}><div style={{ fontSize: 10, color: T.muted }}>COMISIÓN</div><div style={{ fontSize: 16, fontWeight: 600, color: T.danger }}>{fmtMoney(vp.commissionFee)}</div></div>}
+                <div style={{ flex: 1, padding: 10, background: T.bg, borderRadius: 8, textAlign: "center" }}><div style={{ fontSize: 10, color: T.muted }}>FRECUENCIA</div><div style={{ fontSize: 13, fontWeight: 500, marginTop: 2 }}>{vp.frequency}</div></div>
+              </div>
+              {vp.notes && <div style={{ fontSize: 12, color: T.muted, padding: "8px 10px", background: T.bg, borderRadius: 8, marginBottom: 14 }}>{vp.notes}</div>}
+              {(() => { const pn = data.notes.filter(n => n.patientId === vp.id).slice(0, 3); return pn.length > 0 && <div style={{ marginBottom: 14 }}><div style={{ fontSize: 12, fontWeight: 600, color: T.accent, marginBottom: 6 }}>Últimas notas</div>{pn.map(n => <div key={n.id} style={{ fontSize: 12, color: T.muted, marginBottom: 4, paddingLeft: 8, borderLeft: `2px solid ${T.accentLight}` }}><b>{fmtDate(n.date)}</b> {n.mood||""} — {(n.content||"").slice(0,80)}...</div>)}</div>; })()}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="secondary" style={{ flex: 1 }} onClick={() => { setForm({ ...emptyForm, ...vp, sessionFee: String(vp.sessionFee||""), commissionFee: String(vp.commissionFee||"") }); setEditing(vp.id); setViewing(null); setShow(true); }}>Editar</Btn>
+                <Btn variant="danger" style={{ flex: 1 }} onClick={() => handleDelete(vp.id)}>Eliminar</Btn>
+              </div>
+            </div>)}
+          </Modal>
+          <Modal open={show} onClose={() => { setShow(false); setEditing(null); }} title={editing ? "Editar paciente" : "Nuevo paciente"}>
+            <Inp label="Nombre completo" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="María García" />
+            <Inp label="Teléfono" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="+54 9..." type="tel" />
+            <Inp label="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} type="email" />
+            <Inp label="Ocupación" value={form.job} onChange={e => setForm({ ...form, job: e.target.value })} placeholder="Docente, Contador..." />
+            <Sel label="Lugar de atención" value={form.workplace} onChange={e => setForm({ ...form, workplace: e.target.value })} options={WORKPLACES.map(w => ({ value: w.value, label: `${w.emoji} ${w.label}` }))} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1 }}><Inp label={form.workplace === "centro" ? "Tu honorario ($)" : "Precio sesión ($)"} type="number" value={form.sessionFee} onChange={e => setForm({ ...form, sessionFee: e.target.value })} placeholder="5000" /></div>
+              {form.workplace === "centro" && <div style={{ flex: 1 }}><Inp label="Comisión centro ($)" type="number" value={form.commissionFee} onChange={e => setForm({ ...form, commissionFee: e.target.value })} placeholder="2000" /></div>}
+            </div>
+            {form.workplace === "centro" && <div style={{ fontSize: 11, color: T.muted, padding: "6px 8px", background: T.warnSoft, borderRadius: 6, marginBottom: 12, marginTop: -4 }}>💡 Total paciente: {fmtMoney((Number(form.sessionFee)||0)+(Number(form.commissionFee)||0))}. Tus ganancias: {fmtMoney(form.sessionFee)}.</div>}
+            <Sel label="Frecuencia" value={form.frequency} onChange={e => setForm({ ...form, frequency: e.target.value })} options={[{value:"semanal",label:"Semanal"},{value:"quincenal",label:"Quincenal"},{value:"mensual",label:"Mensual"},{value:"esporádico",label:"Esporádico"}]} />
+            <TArea label="Observaciones" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Motivo de consulta..." />
+            <Btn onClick={handleSave} style={{ width: "100%" }}>{editing ? "Guardar" : "Agregar paciente"}</Btn>
+          </Modal>
+        </div>
+      );
+    }
+
+    // ═══ AGENDA ═══
+    function AgendaTab({ data, setData }) {
+      const [show, setShow] = useState(false);
+      const [form, setForm] = useState({ patientId: "", date: "", time: "09:00", duration: "50", notes: "" });
+      const t = today();
+      const getName = (id) => data.patients.find(p => p.id === id)?.name || "—";
+      const getPatient = (id) => data.patients.find(p => p.id === id);
+      const handleSave = () => {
+        if (!form.patientId || !form.date || !form.time) return;
+        setData({ ...data, appointments: [...data.appointments, { id: uid(), ...form, confirmed: true, createdAt: new Date().toISOString() }] });
+        setShow(false);
+      };
+      const toggleConfirm = (id) => setData({ ...data, appointments: data.appointments.map(a => a.id === id ? { ...a, confirmed: !a.confirmed } : a) });
+      const remove = (id) => setData({ ...data, appointments: data.appointments.filter(a => a.id !== id) });
+      const upcoming = [...data.appointments].filter(a => a.date >= t).sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+      const grouped = {};
+      upcoming.forEach(a => { if (!grouped[a.date]) grouped[a.date] = []; grouped[a.date].push(a); });
+
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: T.muted }}>{upcoming.length} cita{upcoming.length !== 1 ? "s" : ""} próximas</div>
+            <Btn onClick={() => { setForm({ patientId: data.patients[0]?.id || "", date: t, time: "09:00", duration: "50", notes: "" }); setShow(true); }}>+ Cita</Btn>
+          </div>
+          {upcoming.length === 0 ? <Empty icon="📅" msg="Sin citas" sub="Agendá tocando + Cita" /> : (
+            Object.entries(grouped).map(([date, appts]) => {
+              const isToday = date === t;
+              return (<div key={date} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: isToday ? T.accent : T.muted, letterSpacing: .5, marginBottom: 6, textTransform: "uppercase" }}>{isToday ? "— Hoy —" : `${fmtDay(date)} ${fmtDate(date)}`}</div>
+                {appts.map(a => {
+                  const pat = getPatient(a.patientId);
+                  const wp = WORKPLACES.find(w => w.value === pat?.workplace) || WORKPLACES[0];
+                  return (<div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card, borderRadius: 10, marginBottom: 5, border: `1px solid ${isToday ? T.accentLight : T.border}` }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.accent, minWidth: 44, fontVariantNumeric: "tabular-nums" }}>{a.time}</div>
+                    <div style={{ flex: 1 }}><div style={{ fontSize: 13.5, fontWeight: 500, color: T.text }}>{getName(a.patientId)}</div><div style={{ fontSize: 11, color: T.muted }}>{wp.emoji} {a.duration}min {a.notes ? `· ${a.notes}` : ""}</div></div>
+                    <button onClick={() => toggleConfirm(a.id)} style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", opacity: a.confirmed ? 1 : .35 }}>{a.confirmed ? "✅" : "⬜"}</button>
+                    <button onClick={() => remove(a.id)} style={{ background: "none", border: "none", fontSize: 14, cursor: "pointer", color: T.muted }}>✕</button>
+                  </div>);
+                })}
+              </div>);
+            })
+          )}
+          <Modal open={show} onClose={() => setShow(false)} title="Nueva cita">
+            {data.patients.length === 0 ? <div style={{ textAlign: "center", padding: 20, color: T.muted }}>Primero agregá un paciente</div> : (<>
+              <Sel label="Paciente" value={form.patientId} onChange={e => setForm({ ...form, patientId: e.target.value })} options={[{ value: "", label: "Seleccionar..." }, ...data.patients.map(p => ({ value: p.id, label: `${p.name} (${WORKPLACES.find(w=>w.value===p.workplace)?.emoji||""})` }))]} />
+              <div style={{ display: "flex", gap: 8 }}><div style={{ flex: 1 }}><Inp label="Fecha" type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div><div style={{ flex: 1 }}><Inp label="Hora" type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} /></div></div>
+              <Inp label="Duración (min)" type="number" value={form.duration} onChange={e => setForm({ ...form, duration: e.target.value })} />
+              <Inp label="Nota" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Primera consulta..." />
+              <Btn onClick={handleSave} style={{ width: "100%" }}>Agendar</Btn>
+            </>)}
+          </Modal>
+        </div>
+      );
+    }
+
+    // ═══ NOTES ═══
+    function NotesTab({ data, setData }) {
+      const [show, setShow] = useState(false);
+      const [form, setForm] = useState({ patientId: "", date: "", content: "", mood: "", tags: "" });
+      const moods = ["😊","😐","😟","😢","😠","😰"];
+      const getName = (id) => data.patients.find(p => p.id === id)?.name || "—";
+      const handleSave = () => {
+        if (!form.patientId || !form.content.trim()) return;
+        setData({ ...data, notes: [{ id: uid(), ...form, createdAt: new Date().toISOString() }, ...data.notes] });
+        setShow(false);
+      };
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: T.muted }}>{data.notes.length} notas</div>
+            <Btn onClick={() => { setForm({ patientId: data.patients[0]?.id || "", date: today(), content: "", mood: "", tags: "" }); setShow(true); }}>+ Nota</Btn>
+          </div>
+          {data.notes.length === 0 ? <Empty icon="📝" msg="Sin notas" sub="Registrá observaciones de sesión" /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {data.notes.map(n => (
+                <div key={n.id} style={{ padding: 12, background: T.card, borderRadius: 10, border: `1px solid ${T.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Avatar name={getName(n.patientId)} size={26} /><div><div style={{ fontSize: 13, fontWeight: 500 }}>{getName(n.patientId)}</div><div style={{ fontSize: 10, color: T.muted }}>{fmtDate(n.date)} {n.mood||""}</div></div></div>
+                    <button onClick={() => setData({ ...data, notes: data.notes.filter(x => x.id !== n.id) })} style={{ background: "none", border: "none", fontSize: 13, cursor: "pointer", color: T.muted }}>🗑</button>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{n.content}</div>
+                  {n.tags && <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>{n.tags.split(",").map((t, i) => <Badge key={i}>{t.trim()}</Badge>)}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+          <Modal open={show} onClose={() => setShow(false)} title="Nueva nota clínica">
+            {data.patients.length === 0 ? <div style={{ textAlign: "center", padding: 20, color: T.muted }}>Primero agregá un paciente</div> : (<>
+              <Sel label="Paciente" value={form.patientId} onChange={e => setForm({ ...form, patientId: e.target.value })} options={[{ value: "", label: "Seleccionar..." }, ...data.patients.map(p => ({ value: p.id, label: p.name }))]} />
+              <Inp label="Fecha" type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
+              <div style={{ marginBottom: 12 }}><label style={{ fontSize: 11, fontWeight: 500, color: T.muted, display: "block", marginBottom: 4 }}>Estado emocional</label><div style={{ display: "flex", gap: 6 }}>{moods.map(m => <button key={m} onClick={() => setForm({ ...form, mood: m })} style={{ fontSize: 22, padding: "3px 5px", borderRadius: 6, border: "none", cursor: "pointer", background: form.mood === m ? T.accentSoft : "transparent", transform: form.mood === m ? "scale(1.15)" : "scale(1)", transition: ".15s" }}>{m}</button>)}</div></div>
+              <TArea label="Notas de sesión" value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} placeholder="Temas tratados, evolución..." style={{ minHeight: 100 }} />
+              <Inp label="Etiquetas (coma)" value={form.tags} onChange={e => setForm({ ...form, tags: e.target.value })} placeholder="ansiedad, familia..." />
+              <Btn onClick={handleSave} style={{ width: "100%" }}>Guardar nota</Btn>
+            </>)}
+          </Modal>
+        </div>
+      );
+    }
+
+    // ═══ TURNERO ═══
+    function TurneroTab({ data }) {
+      const nextWeek = getWeekDates(1);
+      const getName = (id) => data.patients.find(p => p.id === id)?.name || "—";
+      const getPatient = (id) => data.patients.find(p => p.id === id);
+      const centroAppts = data.appointments.filter(a => nextWeek.includes(a.date) && a.confirmed && getPatient(a.patientId)?.workplace === "centro").sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+      const totalCommission = centroAppts.reduce((s, a) => s + (getPatient(a.patientId)?.commissionFee || 0), 0);
+
+      const buildText = () => {
+        let txt = `📋 *TURNERO SEMANA ${fmtDate(nextWeek[0])} - ${fmtDate(nextWeek[6])}*\n🏢 Centro\n\n`;
+        if (centroAppts.length === 0) return txt + "(Sin turnos confirmados)\n";
+        const grouped = {};
+        centroAppts.forEach(a => { if (!grouped[a.date]) grouped[a.date] = []; grouped[a.date].push(a); });
+        Object.entries(grouped).forEach(([date, appts]) => {
+          txt += `📅 *${fmtDay(date)} ${fmtDate(date)}*\n`;
+          appts.forEach(a => { const pat = getPatient(a.patientId); txt += `  ⏰ ${a.time} — ${getName(a.patientId)}${pat?.job ? ` (${pat.job})` : ""}\n`; });
+          txt += `\n`;
+        });
+        txt += `──────────────\n👥 Total turnos: ${centroAppts.length}\n💰 Comisión total a pagar: ${fmtMoney(totalCommission)}\n`;
+        return txt;
+      };
+      const turneroText = buildText();
+      const copy = () => { navigator.clipboard?.writeText(turneroText).then(() => alert("¡Copiado! Pegalo en WhatsApp")); };
+      const shareWA = () => { window.open(`https://wa.me/?text=${encodeURIComponent(turneroText)}`, "_blank"); };
+
+      return (
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 2, fontFamily: "'Playfair Display', Georgia, serif" }}>Turnero — Semana próxima</div>
+          <div style={{ fontSize: 11, color: T.muted, marginBottom: 14 }}>Lun {fmtDate(nextWeek[0])} → Dom {fmtDate(nextWeek[6])} · Pacientes del Centro</div>
+          {centroAppts.length === 0 ? <Empty icon="📋" msg="Sin turnos del Centro" sub="Agendá citas del Centro para la semana que viene" /> : (<>
+            {(() => {
+              const grouped = {};
+              centroAppts.forEach(a => { if (!grouped[a.date]) grouped[a.date] = []; grouped[a.date].push(a); });
+              return Object.entries(grouped).map(([date, appts]) => (
+                <div key={date} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: T.accent, letterSpacing: .5, marginBottom: 4, textTransform: "uppercase" }}>{fmtDay(date)} {fmtDate(date)}</div>
+                  {appts.map(a => { const pat = getPatient(a.patientId); return (<div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", background: T.card, borderRadius: 8, marginBottom: 4, border: `1px solid ${T.border}` }}><span style={{ fontSize: 12, fontWeight: 600, color: T.accent, minWidth: 40 }}>{a.time}</span><div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 500 }}>{getName(a.patientId)}</div>{pat?.job && <div style={{ fontSize: 10.5, color: T.muted }}>{pat.job}</div>}</div><div style={{ fontSize: 11, color: T.danger, fontWeight: 500 }}>{fmtMoney(pat?.commissionFee)}</div></div>); })}
+                </div>
+              ));
+            })()}
+            <div style={{ padding: 12, background: T.warnSoft, borderRadius: 10, marginBottom: 14, border: "1px solid #EBDFC4" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 13, fontWeight: 500, color: T.text }}>👥 {centroAppts.length} turnos</span><span style={{ fontSize: 15, fontWeight: 700, color: T.warn }}>Comisión: {fmtMoney(totalCommission)}</span></div>
+            </div>
+            <div style={{ padding: 12, background: T.bg, borderRadius: 10, marginBottom: 12, border: `1px solid ${T.border}` }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 6 }}>VISTA PREVIA</div>
+              <pre style={{ fontSize: 12, color: T.text, whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit", lineHeight: 1.6 }}>{turneroText}</pre>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn variant="secondary" onClick={copy} style={{ flex: 1 }}>📋 Copiar</Btn>
+              <Btn onClick={shareWA} style={{ flex: 1, background: "#25D366", color: "#fff" }}>💬 WhatsApp</Btn>
+            </div>
+          </>)}
+        </div>
+      );
+    }
+
+    // ═══ FINANCES ═══
+    function FinancesTab({ data, setData }) {
+      const [show, setShow] = useState(false);
+      const [form, setForm] = useState({ patientId: "", date: "", amount: "", paymentType: "full", method: "efectivo", notes: "" });
+      const getName = (id) => data.patients.find(p => p.id === id)?.name || "—";
+      const getPatient = (id) => data.patients.find(p => p.id === id);
+
+      const handleSave = () => {
+        if (!form.patientId || !form.amount) return;
+        const pat = getPatient(form.patientId);
+        const totalCost = pat?.workplace === "centro" ? ((pat?.sessionFee||0)+(pat?.commissionFee||0)) : (pat?.sessionFee||0);
+        const entry = { id: uid(), ...form, amount: Number(form.amount), totalSessionCost: totalCost, patientFee: pat?.sessionFee||0, commissionFee: pat?.commissionFee||0, workplace: pat?.workplace||"particular", paid: form.paymentType==="full", partialPaid: form.paymentType==="partial", pendingAmount: form.paymentType==="partial"?(totalCost-Number(form.amount)):form.paymentType==="unpaid"?totalCost:0, createdAt: new Date().toISOString() };
+        setData({ ...data, payments: [entry, ...data.payments] });
+        setShow(false);
+      };
+      const markPaid = (id) => setData({ ...data, payments: data.payments.map(p => p.id === id ? { ...p, paid: true, partialPaid: false, paymentType: "full", amount: p.totalSessionCost || p.amount, pendingAmount: 0 } : p) });
+      const thisMonth = new Date().toISOString().slice(0, 7);
+      const monthPayments = data.payments.filter(p => p.date?.startsWith(thisMonth));
+      const totalEarnings = monthPayments.reduce((s, p) => { if (!p.paid && !p.partialPaid) return s; if (p.workplace === "centro") { if (p.partialPaid) { const total = p.totalSessionCost||1; return s+(p.amount*(p.patientFee/total)); } return s+(p.patientFee||0); } return s+p.amount; }, 0);
+      const pendingTotal = monthPayments.reduce((s, p) => s + (p.pendingAmount || 0), 0);
+
+      return (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <div style={{ flex: 1, padding: 12, background: T.card, borderRadius: 10, border: `1px solid ${T.border}` }}><div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", marginBottom: 2 }}>Ganancia (mes)</div><div style={{ fontSize: 18, fontWeight: 600, color: T.success, fontFamily: "'Playfair Display', Georgia, serif" }}>{fmtMoney(Math.round(totalEarnings))}</div></div>
+            <div style={{ flex: 1, padding: 12, background: T.card, borderRadius: 10, border: `1px solid ${T.border}` }}><div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", marginBottom: 2 }}>Pendiente</div><div style={{ fontSize: 18, fontWeight: 600, color: T.danger, fontFamily: "'Playfair Display', Georgia, serif" }}>{fmtMoney(pendingTotal)}</div></div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ fontSize: 12, color: T.muted }}>{data.payments.length} registros</div><Btn onClick={() => { setForm({ patientId: data.patients[0]?.id||"", date: today(), amount: "", paymentType: "full", method: "efectivo", notes: "" }); setShow(true); }}>+ Pago</Btn></div>
+          {data.payments.length === 0 ? <Empty icon="💰" msg="Sin registros" /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {data.payments.map(p => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card, borderRadius: 10, border: `1px solid ${T.border}` }}>
+                  <div onClick={() => !p.paid && markPaid(p.id)} style={{ width: 26, height: 26, borderRadius: "50%", flexShrink: 0, background: p.paid?T.success:p.partialPaid?T.warn:T.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff", fontSize: 12, fontWeight: 600 }}>{p.paid?"✓":p.partialPaid?"½":""}</div>
+                  <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 500, color: T.text }}>{getName(p.patientId)}</div><div style={{ fontSize: 11, color: T.muted }}>{fmtDate(p.date)} · {p.method}{p.partialPaid?" · Seña 50%":""}{!p.paid&&!p.partialPaid?" · Sin pagar":""}</div></div>
+                  <div style={{ textAlign: "right" }}><div style={{ fontSize: 14, fontWeight: 600, color: p.paid?T.success:p.partialPaid?T.warn:T.danger }}>{fmtMoney(p.amount)}</div>{p.pendingAmount>0&&<div style={{ fontSize: 10, color: T.danger }}>Debe: {fmtMoney(p.pendingAmount)}</div>}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <Modal open={show} onClose={() => setShow(false)} title="Registrar pago">
+            {data.patients.length === 0 ? <div style={{ textAlign: "center", padding: 20, color: T.muted }}>Primero agregá un paciente</div> : (<>
+              <Sel label="Paciente" value={form.patientId} onChange={e => { const pat=getPatient(e.target.value); const total=pat?.workplace==="centro"?((pat?.sessionFee||0)+(pat?.commissionFee||0)):(pat?.sessionFee||0); setForm({ ...form, patientId: e.target.value, amount: form.paymentType==="partial"?String(Math.round(total*.5)):String(total) }); }} options={[{ value: "", label: "Seleccionar..." }, ...data.patients.map(p => ({ value: p.id, label: p.name }))]} />
+              <Sel label="Estado" value={form.paymentType} onChange={e => { const pat=getPatient(form.patientId); const total=pat?.workplace==="centro"?((pat?.sessionFee||0)+(pat?.commissionFee||0)):(pat?.sessionFee||0); setForm({ ...form, paymentType: e.target.value, amount: String(e.target.value==="partial"?Math.round(total*.5):e.target.value==="full"?total:0) }); }} options={[{value:"full",label:"✅ Pago completo"},{value:"partial",label:"½ Seña 50%"},{value:"unpaid",label:"❌ No pagó"}]} />
+              <div style={{ display: "flex", gap: 8 }}><div style={{ flex: 1 }}><Inp label="Fecha" type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div><div style={{ flex: 1 }}><Inp label="Monto ($)" type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div></div>
+              <Sel label="Método" value={form.method} onChange={e => setForm({ ...form, method: e.target.value })} options={[{value:"efectivo",label:"Efectivo"},{value:"transferencia",label:"Transferencia"},{value:"obra social",label:"Obra social"},{value:"otro",label:"Otro"}]} />
+              <Inp label="Nota" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
+              <Btn onClick={handleSave} style={{ width: "100%" }}>Registrar</Btn>
+            </>)}
+          </Modal>
+        </div>
+      );
+    }
+
+    // ═══ DEBTORS ═══
+    function DebtorsTab({ data, setData }) {
+      const getName = (id) => data.patients.find(p => p.id === id)?.name || "—";
+      const getPatient = (id) => data.patients.find(p => p.id === id);
+      const debts = data.payments.filter(p => (p.pendingAmount||0) > 0 || (!p.paid && !p.partialPaid));
+      const byPatient = {};
+      debts.forEach(d => { if (!byPatient[d.patientId]) byPatient[d.patientId] = []; byPatient[d.patientId].push(d); });
+      const totalDebt = debts.reduce((s, d) => s + (d.pendingAmount || d.totalSessionCost || d.amount || 0), 0);
+      const markPaid = (id) => setData({ ...data, payments: data.payments.map(p => p.id === id ? { ...p, paid: true, partialPaid: false, paymentType: "full", amount: p.totalSessionCost || p.amount, pendingAmount: 0 } : p) });
+
+      return (
+        <div>
+          <div style={{ padding: 14, background: debts.length>0?T.dangerSoft:T.successSoft, borderRadius: 10, marginBottom: 14, textAlign: "center", border: `1px solid ${debts.length>0?"#E8C9C2":"#C4DCC9"}` }}>
+            <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", marginBottom: 2 }}>Total adeudado</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: debts.length>0?T.danger:T.success, fontFamily: "'Playfair Display', Georgia, serif" }}>{fmtMoney(totalDebt)}</div>
+            <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{debts.length} sesion{debts.length!==1?"es":""} con deuda</div>
+          </div>
+          {debts.length === 0 ? <Empty icon="🎉" msg="¡Sin deudores!" sub="Todos los pagos al día" /> : (
+            Object.entries(byPatient).map(([patId, payments]) => {
+              const pat = getPatient(patId);
+              const patDebt = payments.reduce((s, p) => s + (p.pendingAmount||p.totalSessionCost||p.amount||0), 0);
+              const wp = WORKPLACES.find(w => w.value === pat?.workplace) || WORKPLACES[0];
+              return (<div key={patId} style={{ marginBottom: 12, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", background: T.warm }}><Avatar name={getName(patId)} size={32} /><div style={{ flex: 1 }}><div style={{ fontSize: 13.5, fontWeight: 500 }}>{getName(patId)}</div><div style={{ fontSize: 11, color: T.muted }}>{wp.emoji} {wp.label} {pat?.job?`· ${pat.job}`:""}</div></div><div style={{ fontSize: 15, fontWeight: 700, color: T.danger }}>{fmtMoney(patDebt)}</div></div>
+                <div style={{ padding: "6px 12px 10px" }}>
+                  {payments.map(p => (<div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${T.bg}` }}><div><div style={{ fontSize: 12 }}>{fmtDate(p.date)}</div><div style={{ fontSize: 10.5, color: T.muted }}>{p.partialPaid?<Badge color="yellow">Seña 50%</Badge>:<Badge color="red">Sin pagar</Badge>} Debe {fmtMoney(p.pendingAmount||p.totalSessionCost)}</div></div><Btn variant="success" onClick={() => markPaid(p.id)} style={{ padding: "5px 10px", fontSize: 11 }}>Pagado ✓</Btn></div>))}
+                </div>
+              </div>);
+            })
+          )}
+        </div>
+      );
+    }
+
+    // ═══ MAIN APP ═══
+    function ClaraMente() {
+      const [data, setDataRaw] = useState(load);
+      const [tab, setTab] = useState("patients");
+      const [notifBanner, setNotifBanner] = useState(false);
+      const [showHelp, setShowHelp] = useState(false);
+      const timersRef = useRef([]);
+      const setData = (d) => { setDataRaw(d); save(d); };
+
+      useEffect(() => { if ("Notification" in window && Notification.permission === "default") setNotifBanner(true); }, []);
+
+      // Notification scheduler
+      useEffect(() => {
+        timersRef.current.forEach(t => clearTimeout(t));
+        timersRef.current = [];
+        if (!("Notification" in window) || Notification.permission !== "granted") return;
+        const now = new Date();
+        const getName = (id) => data.patients.find(p => p.id === id)?.name || "Paciente";
+        const getPatient = (id) => data.patients.find(p => p.id === id);
+
+        // Daily 8am
+        const next8 = new Date(); next8.setHours(8,0,0,0);
+        if (next8 <= now) next8.setDate(next8.getDate()+1);
+        const ms8 = next8 - now;
+        if (ms8 < 86400000) {
+          timersRef.current.push(setTimeout(() => {
+            const d = next8.toISOString().split("T")[0];
+            const appts = data.appointments.filter(a => a.date === d).sort((a,b) => a.time.localeCompare(b.time));
+            sendNotif(appts.length>0?`📅 Hoy: ${appts.length} paciente${appts.length>1?"s":""}`:"📅 Buenos días", appts.length>0?appts.map(a=>`${a.time} ${getName(a.patientId)}`).join("\n"):"No tenés pacientes hoy","daily-8am");
+          }, ms8));
+        }
+
+        // 5-min pre-appointment
+        const todayStr = now.toISOString().split("T")[0];
+        data.appointments.filter(a => a.date === todayStr).forEach(a => {
+          const [h,m] = (a.time||"09:00").split(":").map(Number);
+          const apptTime = new Date(now); apptTime.setHours(h,m,0,0);
+          const ms = apptTime.getTime() - 5*60000 - now.getTime();
+          if (ms > 0 && ms < 43200000) {
+            timersRef.current.push(setTimeout(() => {
+              const pat = getPatient(a.patientId);
+              const wp = WORKPLACES.find(w => w.value === pat?.workplace);
+              const lastPay = data.payments.filter(p => p.patientId === a.patientId)[0];
+              let payStatus = "💰 Sin registro de pago";
+              if (lastPay) { if (lastPay.paid) payStatus="✅ Pagos al día"; else if (lastPay.partialPaid) payStatus=`⚠️ Debe 50% (${fmtMoney(lastPay.pendingAmount)})`; else payStatus=`❌ Debe ${fmtMoney(lastPay.pendingAmount||lastPay.totalSessionCost)}`; }
+              sendNotif(`⏰ En 5 min: ${getName(a.patientId)}`, [`${wp?.emoji||""} ${wp?.label||""} · ${pat?.job||""}`, payStatus, `Sesión: ${fmtMoney(pat?.sessionFee)}`].filter(Boolean).join("\n"), `pre-${a.id}`);
+            }, ms));
+          }
+        });
+
+        // Friday 20:00
+        const fri = new Date(now);
+        const daysToFri = (5 - now.getDay() + 7) % 7;
+        fri.setDate(now.getDate() + (daysToFri===0 && now.getHours()>=20 ? 7 : daysToFri));
+        fri.setHours(20,0,0,0);
+        const msFri = fri - now;
+        if (msFri > 0 && msFri < 604800000) {
+          timersRef.current.push(setTimeout(() => {
+            const nw = getWeekDates(1);
+            const ca = data.appointments.filter(a => nw.includes(a.date) && a.confirmed && getPatient(a.patientId)?.workplace==="centro");
+            const comm = ca.reduce((s,a) => s+(getPatient(a.patientId)?.commissionFee||0), 0);
+            sendNotif("📋 ¡Mandá el turnero!", `${ca.length} turnos del Centro. Comisión: ${fmtMoney(comm)}. Abrí ClaraMente → Turnero`, "fri-turnero");
+          }, msFri));
+        }
+        return () => timersRef.current.forEach(t => clearTimeout(t));
+      }, [data]);
+
+      return (
+        <div style={{ minHeight: "100vh", background: T.bg, fontFamily: "'DM Sans','Segoe UI',system-ui,sans-serif", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: 76 }}>
+          <style>{`
+            @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap');
+            @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+            @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+            *{-webkit-tap-highlight-color:transparent;box-sizing:border-box}
+            body{margin:0;overflow-x:hidden}
+            input,select,textarea,button{font-family:'DM Sans',system-ui,sans-serif}
+            ::-webkit-scrollbar{width:0}
+          `}</style>
+
+          <div style={{ padding: "18px 18px 14px", background: `linear-gradient(135deg, ${T.bg} 0%, ${T.warm} 100%)` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: T.text, fontFamily: "'Playfair Display', Georgia, serif", letterSpacing: -.5 }}>Clara<span style={{ color: T.accent }}>Mente</span></h1>
+                <p style={{ margin: "1px 0 0", fontSize: 11, color: T.muted, letterSpacing: .3 }}>Tu consultorio organizado ✨</p>
+              </div>
+              <div style={{ fontSize: 11, color: T.accent, background: T.accentSoft, padding: "3px 9px", borderRadius: 20, fontWeight: 500, whiteSpace: "nowrap" }}>{data.patients.length} paciente{data.patients.length !== 1 ? "s" : ""}</div>
+              <button onClick={() => setShowHelp(true)} style={{ width: 34, height: 34, borderRadius: "50%", background: T.accentSoft, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: T.accent, fontWeight: 700, flexShrink: 0, fontFamily: "'Playfair Display', Georgia, serif" }}>?</button>
+            </div>
+          </div>
+
+          {notifBanner && (
+            <div style={{ margin: "0 16px 8px", padding: "10px 14px", background: T.warnSoft, borderRadius: 10, display: "flex", alignItems: "center", gap: 10, border: "1px solid #EBDFC4" }}>
+              <span style={{ fontSize: 20 }}>🔔</span>
+              <div style={{ flex: 1 }}><div style={{ fontSize: 12, fontWeight: 500 }}>Activar notificaciones</div><div style={{ fontSize: 11, color: T.muted }}>Recordatorios diarios y pre-sesión</div></div>
+              <Btn onClick={() => { requestNotifPermission(); setNotifBanner(false); }} style={{ padding: "6px 12px", fontSize: 12 }}>Activar</Btn>
+            </div>
+          )}
+
+          <div style={{ padding: "12px 16px 0" }}>
+            {tab === "patients" && <PatientsTab data={data} setData={setData} />}
+            {tab === "agenda" && <AgendaTab data={data} setData={setData} />}
+            {tab === "notes" && <NotesTab data={data} setData={setData} />}
+            {tab === "turnero" && <TurneroTab data={data} />}
+            {tab === "finances" && <FinancesTab data={data} setData={setData} />}
+            {tab === "debtors" && <DebtorsTab data={data} setData={setData} />}
+          </div>
+
+          {/* Help Modal */}
+          <Modal open={showHelp} onClose={() => setShowHelp(false)} title="¿Cómo uso ClaraMente?">
+            <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>
+              <div style={{ padding: "12px 14px", background: T.warm, borderRadius: 10, marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>¡Hola! 👋</div>
+                <div style={{ fontSize: 12.5, color: T.muted }}>ClaraMente te ayuda a organizar tu consultorio: pacientes, citas, notas clínicas, pagos y turnero semanal. Acá te explico paso a paso cómo usar cada sección.</div>
+              </div>
+
+              {[
+                { n: 1, title: "👤 Pacientes — Empezá por acá", content: <div><p style={{margin:"0 0 4px"}}>Tocá <b style={{color:T.accent}}>+ Nuevo</b> para agregar un paciente.</p><p style={{margin:"0 0 4px"}}>Completá su nombre, teléfono y ocupación.</p><p style={{margin:"0 0 4px"}}>En <b>"Lugar de atención"</b> elegí dónde lo atendés:</p><div style={{padding:"6px 10px",background:T.bg,borderRadius:8,marginBottom:4}}>🏠 <b>Particular</b> — ponés el precio de la sesión<br/>🏢 <b>Centro</b> — ponés tu honorario + la comisión del centro<br/>🏛️ <b>Centro Vecinal</b> — ponés el precio de la sesión</div><p style={{margin:"4px 0 0"}}>Tocá un paciente para ver su ficha, editarlo o eliminarlo.</p></div> },
+                { n: 2, title: "📅 Agenda — Tus citas del día", content: <div><p style={{margin:"0 0 4px"}}>Tocá <b style={{color:T.accent}}>+ Cita</b>, elegí el paciente, fecha, hora y duración.</p><p style={{margin:"0 0 4px"}}>Tocá ✅ para confirmar/desconfirmar. Tocá ✕ para eliminar.</p><div style={{padding:"6px 10px",background:T.warnSoft,borderRadius:8,marginTop:6}}>💡 <b>Tip:</b> 5 min antes de cada cita recibís una notificación con el nombre, trabajo, y si pagó o debe.</div></div> },
+                { n: 3, title: "📝 Notas — Historia clínica", content: <div><p style={{margin:"0 0 4px"}}>Después de cada sesión, tocá <b style={{color:T.accent}}>+ Nota</b>.</p><p style={{margin:"0 0 4px"}}>Podés marcar el estado emocional con un emoji.</p><p style={{margin:"0 0 0"}}>Usá <b>etiquetas</b> separadas por coma (ej: "ansiedad, familia").</p></div> },
+                { n: 4, title: "📋 Turnero — Para tu supervisora", content: <div><p style={{margin:"0 0 4px"}}>Se genera automáticamente con los turnos confirmados del <b>Centro</b> de la semana próxima (Lun a Dom).</p><p style={{margin:"0 0 4px"}}>Muestra la comisión total a pagar esa semana.</p><p style={{margin:"0 0 4px"}}>Tocá <b style={{color:"#25D366"}}>💬 WhatsApp</b> para enviarlo directo.</p><div style={{padding:"6px 10px",background:T.warnSoft,borderRadius:8,marginTop:6}}>💡 <b>Tip:</b> Los viernes a las 20hs te llega un recordatorio para mandarlo.</div></div> },
+                { n: 5, title: "💰 Finanzas — Controlá tus cobros", content: <div><p style={{margin:"0 0 4px"}}>Registrá pagos con <b style={{color:T.accent}}>+ Pago</b>. Tres estados:</p><div style={{padding:"6px 10px",background:T.bg,borderRadius:8,marginBottom:4}}>✅ <b>Pago completo</b><br/>½ <b>Seña 50%</b> — queda debiendo el resto<br/>❌ <b>No pagó</b> — deuda completa</div><p style={{margin:"4px 0 0"}}>Tu ganancia mensual solo cuenta tu honorario (sin comisión del Centro).</p></div> },
+                { n: 6, title: "⚠️ Deudas — Quién te debe", content: <div><p style={{margin:"0 0 4px"}}>Ves todos los pacientes que deben (50% o 100%).</p><p style={{margin:"0 0 0"}}>Tocá <b style={{color:T.success}}>Pagado ✓</b> cuando te paguen.</p></div> },
+              ].map(s => (
+                <div key={s.n} style={{ marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: "50%", background: T.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{s.n}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{s.title}</div>
+                  </div>
+                  <div style={{ paddingLeft: 36, fontSize: 12.5, color: T.muted }}>{s.content}</div>
+                </div>
+              ))}
+
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: "50%", background: T.warn, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>🔔</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Notificaciones automáticas</div>
+                </div>
+                <div style={{ paddingLeft: 36, fontSize: 12.5, color: T.muted }}>
+                  <div style={{ padding: "6px 10px", background: T.bg, borderRadius: 8 }}>☀️ <b>Todos los días 8:00</b> — pacientes del día<br/><br/>⏰ <b>5 min antes de cada cita</b> — nombre, trabajo, pagos<br/><br/>📋 <b>Viernes 20:00</b> — recordatorio del turnero</div>
+                </div>
+              </div>
+
+              <div style={{ padding: "14px", background: `linear-gradient(135deg, ${T.warm}, ${T.accentSoft})`, borderRadius: 12, marginBottom: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>🚀 Resumen rápido</div>
+                <div style={{ fontSize: 12.5, color: T.text, lineHeight: 1.7 }}><b>1.</b> Agregá tus pacientes en 👤<br/><b>2.</b> Agendá sus citas en 📅<br/><b>3.</b> Después de cada sesión, anotá en 📝 y registrá el pago en 💰<br/><b>4.</b> Los viernes, andá a 📋 y mandá el turnero<br/><b>5.</b> Revisá ⚠️ para ver quién te debe</div>
+              </div>
+              <div style={{ textAlign: "center", fontSize: 11, color: T.muted, marginTop: 12 }}>Hecho con 💜 para vos</div>
+            </div>
+          </Modal>
+
+          <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(12px)", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-around", padding: "4px 0 env(safe-area-inset-bottom, 6px)", zIndex: 100 }}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "5px 4px", borderRadius: 6, opacity: tab === t.id ? 1 : .4, transition: "opacity .2s", minWidth: 0 }}>
+                <span style={{ fontSize: 16 }}>{t.icon}</span>
+                <span style={{ fontSize: 8.5, fontWeight: tab === t.id ? 600 : 400, color: tab === t.id ? T.accent : T.muted, letterSpacing: .1 }}>{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<ClaraMente />);
+  </script>
+
+  <!-- Service Worker registration for PWA -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

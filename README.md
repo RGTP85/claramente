@@ -43,12 +43,11 @@ Todos los datos se guardan **localmente en el celular** del usuario (localStorag
 claramente-project/
 ├── README.md           ← Este archivo
 ├── .gitignore
-└── public/
-    ├── index.html      ← La app completa
-    ├── manifest.json   ← Configuración PWA
-    ├── sw.js           ← Service Worker (offline)
-    ├── icon-192.png    ← Ícono app
-    └── icon-512.png    ← Ícono app (alta res)
+├── index.html      ← La app completa
+├── manifest.json   ← Configuración PWA
+├── sw.js           ← Service Worker (offline)
+├── icon-192.png    ← Ícono app
+└── icon-512.png    ← Ícono app (alta res)
 ```
 
 ---
